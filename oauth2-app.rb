@@ -20,13 +20,15 @@ end
 
 client_id = ENV['CLIENT_ID']
 client_secret = ENV['CLIENT_SECRET']
-doorkeeper_scope = ENV.fetch('ROUTE_USE_DOORKEEPER_SCOPE', 'oauth')
 oauth2_scope = ENV.fetch('OAUTH2_SCOPE', 'public')
 redirect_uri = 'http://localhost:4567/callback'
+site= ENV.fetch('SITE', 'http://localhost:3000')
+authorize_url_base = ENV.fetch('AUTHORIZE_URL_BASE', site + '/oauth')
+token_url_base = ENV.fetch('TOKEN_URL_BASE', site + '/oauth')
 oauth2_options = {
-  site: 'http://localhost:3000',
-  authorize_url: "/#{doorkeeper_scope}/authorize",
-  token_url: "/#{doorkeeper_scope}/token",
+  site: site,
+  authorize_url: authorize_url_base + '/authorize',
+  token_url: token_url_base + '/token',
 }
 
 set :show_exceptions, :after_handler
@@ -57,18 +59,27 @@ get '/info' do
   client = OAuth2::Client.new(client_id, client_secret, oauth2_options)
   halt '<a href=/login>login</a>' unless session.key?(:token)
   token = OAuth2::AccessToken.from_hash(client, session[:token])
+  # begin
+  #   info_response = token.get("/#{doorkeeper_scope}/token/info").parsed
+  # rescue OAuth2::Error => e
+  #   info_response = "#{e.code}: #{e.description}"
+  # end
+  response = token.post(token_url_base + '/introspect', body: { token: token.token })
+  response2 = token.post(token_url_base + '/introspect', body: { token: token.refresh_token })
+
+  require 'json'
   begin
-    info_response = token.get("/#{doorkeeper_scope}/token/info").parsed
+  res = token.get('http://api.lvh.me:3000/v1/me.json')
+    me = JSON.parse(res.body)
   rescue OAuth2::Error => e
-    info_response = "#{e.code}: #{e.description}"
+    me = { error: { code: e.code, description: e.description } }
   end
-  response = token.post("/#{doorkeeper_scope}/introspect", body: { token: token.token })
-  response2 = token.post("/#{doorkeeper_scope}/introspect", body: { token: token.refresh_token })
   PP.pp({
     expires_at: Time.at(token.expires_at),
     access_token: token.token,
     refresh_token: token.refresh_token,
-    info: info_response,
+    # info: info_response,
+    me: me,
     introspect_access_token: response.parsed,
     introspect_refresh_token: response2.parsed,
   }, '<a href=/login>login</a> <a href=/refresh>refresh</a> <a href=/info>reload</a><xmp>'.dup)
